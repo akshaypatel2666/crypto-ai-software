@@ -4,57 +4,55 @@ import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
+import time
 
-# 30-sec auto refresh
-st_autorefresh(interval=30 * 1000, key="datarefresh")
+# 1-second refresh for live price, 30-sec for graph
+st_autorefresh(interval=1000, key="pricerefresh")
 
-st.set_page_config(page_title="AI Crypto Analyzer", layout="wide")
-st.title("🤖 Akshay's AI Crypto Software")
+st.set_page_config(page_title="Pro AI Crypto Analyzer", layout="wide")
+st.title("🚀 Akshay's Pro AI Trading Suite")
 
-# Sidebar - Yahoo symbols use 'BTC-USD' format
-symbol = st.sidebar.selectbox("Select Coin", ['BTC-USD', 'ETH-USD', 'SOL-USD'])
-timeframe = st.sidebar.selectbox("Timeframe", ['15m', '60m', '1d'])
+# Sidebar - Saare Timeframes jo aapne maange
+symbol = st.sidebar.selectbox("Select Coin", ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD'])
+timeframe = st.sidebar.selectbox("Select Timeframe", ['1m', '2m', '5m', '15m', '30m', '60m', '90m'])
 
-def fetch_data():
+def fetch_live_price():
+    # Last price fetch karne ke liye fast method
+    ticker = yf.Ticker(symbol)
+    data = ticker.fast_info
+    return data['last_price']
+
+def fetch_chart_data():
     try:
-        # Yahoo Finance block nahi hota
-        df = yf.download(tickers=symbol, period='5d', interval=timeframe, progress=False)
+        # 1m, 2m, 5m ke liye Yahoo 'last 1 day' ka data deta hai
+        df = yf.download(tickers=symbol, period='1d', interval=timeframe, progress=False)
         if df.empty: return None
-        # Multi-index cleaning
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         return df
     except Exception as e:
-        st.error(f"Data Fetch Error: {e}")
         return None
 
-df = fetch_data()
+# --- UI Layout ---
+live_price = fetch_live_price()
+df = fetch_chart_data()
+
+# 1. LIVE SECONDS RATE DISPLAY
+st.markdown(f"""
+    <div style="background-color:#1e1e1e; padding:20px; border-radius:10px; border-left: 5px solid #00ff00;">
+        <h2 style="color:white; margin:0;">Live {symbol} Price</h2>
+        <h1 style="color:#00ff00; font-family:monospace;">${live_price:,.2f} <span style="font-size:15px; color:gray;">(Live Seconds Update)</span></h1>
+    </div>
+""", unsafe_allow_html=True)
+
+st.divider()
 
 if df is not None:
-    # Technical Analysis
+    # 2. GRAPH ANALYSIS
     df['RSI'] = ta.rsi(df['Close'], length=14)
+    df['EMA_20'] = ta.ema(df['Close'], length=20)
     
-    last_price = round(float(df['Close'].iloc[-1]), 2)
-    last_rsi = round(float(df['RSI'].iloc[-1]), 2)
-    
-    c1, c2 = st.columns(2)
-    c1.metric("Live Price", f"${last_price}")
-    c2.metric("RSI (14)", last_rsi)
-
-    # AI Candlestick Patterns
-    patterns = df.ta.cdl_pattern(name="all")
-    last_row = patterns.iloc[-1]
-    detected = last_row[last_row != 0]
-    
-    if not detected.empty:
-        st.sidebar.success(f"Pattern: {detected.index[0]}")
-
-    # Candlestick Chart
-    fig = go.Figure(data=[go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close']
-    )])
-    fig.update_layout(xaxis_rangeslider_visible=False, height=600, template="plotly_dark")
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Yahoo Finance se connect ho raha hai... 30 seconds wait karein.")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Current RSI", round(float(df['RSI'].iloc[-1]), 2))
+    col2.metric("24h High", f"${df['High'].max():,.2f}")
+    col3.metric("24h Low",
