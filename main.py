@@ -5,81 +5,60 @@ import pandas_ta as ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 
-# 30-sec refresh settings
+# 30-second auto refresh
 st_autorefresh(interval=30 * 1000, key="datarefresh")
 
-st.set_page_config(page_title="AI Crypto Pro", layout="wide")
-st.title("?? AI Crypto Live Analyzer & Strategy Bot")
+st.set_page_config(page_title="AI Crypto Analyzer", layout="wide")
+st.title("🤖 Akshay's AI Crypto Software")
 
-# --- SESSION STATE (Data Storage) ---
-if 'history' not in st.session_state:
-    st.session_state.history = []
+# Sidebar Settings
+symbol = st.sidebar.selectbox("Select Coin", ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'])
+timeframe = st.sidebar.selectbox("Timeframe", ['15m', '1h', '4h'])
 
-# --- SIDEBAR ---
-st.sidebar.header("Control Panel")
-symbol = st.sidebar.selectbox("Coin", ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT'])
-timeframe = st.sidebar.selectbox("Timeframe", ['1m', '5m', '15m', '1h'])
+# Setup Exchange with retry logic
+exchange = ccxt.binance({'enableRateLimit': True})
 
-# --- FETCH DATA ---
-exchange = ccxt.binance()
 def fetch_data():
     try:
         bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
         df = pd.DataFrame(bars, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
         return df
-    except ccxt.NetworkError as e:
-        st.error("Network Error: Exchange se connect nahi ho paa raha. Dobara koshish ho rahi hai...")
+    except Exception as e:
+        st.warning(f"Connection issue: {e}. Retrying...")
         return None
-    except ccxt.ExchangeError as e:
 
+# Execution logic
 df = fetch_data()
 
-# --- AI CALCULATION ---
-df['RSI'] = ta.rsi(df['Close'], length=14)
-df['EMA_20'] = ta.ema(df['Close'], length=20)
-df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
-
-last_row = df.iloc[-1]
-last_price = last_row['Close']
-last_rsi = last_row['RSI']
-last_atr = last_row['ATR']
-
-# --- TOP STATS ---
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Live Price", f"${last_price}")
-c2.metric("RSI", round(last_rsi, 2))
-c3.metric("Trend", "BULLISH ??" if last_price > last_row['EMA_20'] else "BEARISH ??")
-c4.metric("Volatility (ATR)", round(last_atr, 2))
-
-# --- TRADING LOGIC ---
-fig = go.Figure()
-fig.add_trace(go.Candlestick(x=df['Timestamp'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-
-if last_rsi < 30:
-    target = last_price + (last_atr * 2.5)
-    stop_loss = last_price - (last_atr * 1.5)
+if df is not None:
+    df['RSI'] = ta.rsi(df['Close'], length=14)
+    df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
     
-    st.sidebar.warning("?? SIGNAL DETECTED!")
-    st.sidebar.write(f"**Entry:** {last_price}")
-    st.sidebar.write(f"**Target:** {round(target, 2)}")
-    st.sidebar.write(f"**SL:** {round(stop_loss, 2)}")
+    last_price = df['Close'].iloc[-1]
+    last_rsi = df['RSI'].iloc[-1]
     
-    # Chart par lines draw karna
-    fig.add_hline(y=target, line_dash="dash", line_color="green", annotation_text="Target")
-    fig.add_hline(y=stop_loss, line_dash="dash", line_color="red", annotation_text="StopLoss")
+    # Display Stats
+    c1, c2 = st.columns(2)
+    c1.metric("Live Price", f"${last_price}")
+    c2.metric("RSI", round(last_rsi, 2))
+
+    # Pattern Detection
+    patterns = df.ta.cdl_pattern(name="all")
+    last_pattern = patterns.iloc[-1]
+    detected = last_pattern[last_pattern != 0]
     
-    # Save to history
-    new_entry = {"Time": last_row['Timestamp'], "Signal": "BUY", "Price": last_price, "Target": round(target, 2)}
-    if not st.session_state.history or st.session_state.history[-1]['Time'] != last_row['Timestamp']:
-        st.session_state.history.append(new_entry)
+    if not detected.empty:
+        st.sidebar.success(f"Pattern Detected: {detected.index[0]}")
 
-st.plotly_chart(fig, use_container_width=True)
-
-# --- TRADE LOG TABLE ---
-st.subheader("?? AI Trade Signals Log")
-if st.session_state.history:
-    st.table(pd.DataFrame(st.session_state.history).tail(5))
+    # Chart
+    fig = go.Figure(data=[go.Candlestick(
+        x=df['Timestamp'],
+        open=df['Open'], high=df['High'],
+        low=df['Low'], close=df['Close']
+    )])
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Scanning for entry points...")
+    st.info("Waiting for data from Binance... Please wait 30 seconds.")
 
