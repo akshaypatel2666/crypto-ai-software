@@ -1,88 +1,89 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
+import requests # Direct API call ke liye
 
-# Real-time feel ke liye 1 second refresh
-st_autorefresh(interval=1000, key="vantage_match")
+# --- 1 SECOND REFRESH ---
+st_autorefresh(interval=1000, key="vantage_sync")
 
-st.set_page_config(page_title="Vantage Price Matcher", layout="wide")
+st.set_page_config(page_title="Vantage Real-Time Sync", layout="wide")
 
-st.title("📊 Akshay's AI Analyzer (Vantage Sync)")
+# Custom UI for Price
+st.markdown("""
+    <style>
+    .vantage-price {
+        background-color: #000000;
+        padding: 30px;
+        border-radius: 10px;
+        border: 2px solid #ffcc00;
+        text-align: center;
+    }
+    .big-font { font-size: 70px !important; color: #ffcc00; font-weight: bold; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- SIDEBAR SETTINGS ---
-st.sidebar.header("Vantage Settings")
-symbol = st.sidebar.selectbox("Select Asset", ['BTC-USD', 'ETH-USD', 'GOLD', 'EURUSD=X'])
+# Sidebar
+st.sidebar.title("Vantage Sync Settings")
+coin = st.sidebar.selectbox("Select Coin", ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
+# Vantage price match karne ke liye manual adjustment
+offset = st.sidebar.number_input("Price Adjustment (Manual Sync)", value=0.0)
 
-# Price Offset: Agar Vantage ka rate $5 upar hai, toh aap yahan +5 set kar sakte hain
-offset = st.sidebar.number_input("Price Adjustment (Offset)", value=0.0, step=0.1)
-
-timeframe = st.sidebar.selectbox("Timeframe", ['1m', '5m', '15m', '30m', '1h'])
-
-def get_vantage_style_data():
+def get_crypto_price_direct(symbol):
     try:
-        # Yahoo Finance se data lena
-        df = yf.download(tickers=symbol, period='1d', interval=timeframe, progress=False)
-        if df.empty: return None
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        
-        # Apply Offset to match Vantage
-        df['Open'] += offset
-        df['High'] += offset
-        df['Low'] += offset
-        df['Close'] += offset
+        # Hum Binance ki aisi API use karenge jo location block nahi karti
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        response = requests.get(url, timeout=2)
+        data = response.json()
+        return float(data['price'])
+    except:
+        return None
+
+def get_klines_direct(symbol):
+    try:
+        # Candlestick data fetch karne ke liye
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=50"
+        res = requests.get(url, timeout=2)
+        data = res.json()
+        df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QuoteAssetVol', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
+        df['Close'] = df['Close'].astype(float)
+        df['Open'] = df['Open'].astype(float)
+        df['High'] = df['High'].astype(float)
+        df['Low'] = df['Low'].astype(float)
+        df['Time'] = pd.to_datetime(df['Time'], unit='ms')
         return df
     except:
         return None
 
-df = get_vantage_style_data()
+# Execution
+live_rate = get_crypto_price_direct(coin)
+df = get_klines_direct(coin)
 
-if df is not None:
-    # Latest Price with Offset
-    current_price = float(df['Close'].iloc[-1])
+if live_rate:
+    adjusted_price = live_rate + offset
     
-    # --- VANTAGE STYLE DASHBOARD ---
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown(f"""
-            <div style="background-color:#111; padding:20px; border-radius:10px; border: 2px solid #555;">
-                <p style="color:#aaa; margin:0;">VANTAGE LIVE RATE SYNC</p>
-                <h1 style="color:#f0b90b; font-size:60px; margin:0;">${current_price:,.2f}</h1>
-                <p style="color:gray;">Offset Applied: {offset}</p>
-            </div>
-        """, unsafe_allow_html=True)
+    # --- VANTAGE LIVE DASHBOARD ---
+    st.markdown(f'''
+        <div class="vantage-price">
+            <p style="color:white; font-size:20px;">VANTAGE LIVE RATE (SECONDS)</p>
+            <p class="big-font">${adjusted_price:,.2f}</p>
+        </div>
+    ''', unsafe_allow_html=True)
 
-    with col2:
-        # Mini Stats
-        st.metric("Vantage High", f"${df['High'].max():,.2f}")
-        st.metric("Vantage Low", f"${df['Low'].min():,.2f}")
-
-    st.divider()
-
-    # Chart Analysis
-    fig = go.Figure(data=[go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close'], name="Vantage Style"
-    )])
-    
-    fig.update_layout(
-        template="plotly_dark", 
-        xaxis_rangeslider_visible=False, 
-        height=500,
-        margin=dict(l=0,r=0,t=0,b=0)
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-    # AI Pattern Detection (Sidebar)
-    patterns = df.ta.cdl_pattern(name="all")
-    last_row = patterns.iloc[-1]
-    detected = last_row[last_row != 0]
-    if not detected.empty:
-        st.sidebar.success(f"Signal for Vantage: {detected.index[0]}")
-
+    if df is not None:
+        # Indicators
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        
+        # Chart
+        fig = go.Figure(data=[go.Candlestick(
+            x=df['Time'], open=df['Open']+offset, high=df['High']+offset,
+            low=df['Low']+offset, close=df['Close']+offset
+        )])
+        fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Sidebar RSI
+        st.sidebar.metric("Live RSI", round(df['RSI'].iloc[-1], 2))
 else:
-    st.info("Connecting to Vantage Data Feed...")
+    st.error("Connecting to Global Price Server...")
