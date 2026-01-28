@@ -23,10 +23,15 @@ timeframe = st.sidebar.selectbox("Timeframe", ['1m', '5m', '15m', '1h'])
 # --- FETCH DATA ---
 exchange = ccxt.binance()
 def fetch_data():
-    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
-    df = pd.DataFrame(bars, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
-    return df
+    try:
+        bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
+        df = pd.DataFrame(bars, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
+        return df
+    except ccxt.NetworkError as e:
+        st.error("Network Error: Exchange se connect nahi ho paa raha. Dobara koshish ho rahi hai...")
+        return None
+    except ccxt.ExchangeError as e:
 
 df = fetch_data()
 
@@ -77,3 +82,4 @@ if st.session_state.history:
     st.table(pd.DataFrame(st.session_state.history).tail(5))
 else:
     st.info("Scanning for entry points...")
+
