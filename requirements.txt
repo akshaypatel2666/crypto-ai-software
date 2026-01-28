@@ -1,6 +1,5 @@
 streamlit
-ccxt
+yfinance
 pandas_ta
 plotly
 streamlit-autorefresh
-yfinance
