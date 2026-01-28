@@ -3,3 +3,4 @@ ccxt
 pandas_ta
 plotly
 streamlit-autorefresh
+yfinance
