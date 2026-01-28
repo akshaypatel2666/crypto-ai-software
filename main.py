@@ -12,26 +12,29 @@ st.set_page_config(page_title="AI Crypto Analyzer", layout="wide")
 st.title("🤖 Akshay's AI Crypto Software")
 
 # Sidebar Settings
+# Note: Kuch coins ke naam exchange ke hisaab se badal sakte hain
 symbol = st.sidebar.selectbox("Select Coin", ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'])
 timeframe = st.sidebar.selectbox("Timeframe", ['15m', '1h', '4h'])
 
-# Setup Exchange with retry logic
-exchange = ccxt.binance({'enableRateLimit': True})
+# --- SOLUTION: Using Kraken instead of Binance to avoid location block ---
+exchange = ccxt.kraken({'enableRateLimit': True})
 
 def fetch_data():
     try:
+        # Kraken ke liye thoda alag logic
         bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
         df = pd.DataFrame(bars, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
         df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
         return df
     except Exception as e:
-        st.warning(f"Connection issue: {e}. Retrying...")
+        st.warning(f"Connection issue: {e}. Trying to reconnect...")
         return None
 
 # Execution logic
 df = fetch_data()
 
 if df is not None:
+    # Indicators
     df['RSI'] = ta.rsi(df['Close'], length=14)
     df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
     
@@ -41,24 +44,26 @@ if df is not None:
     # Display Stats
     c1, c2 = st.columns(2)
     c1.metric("Live Price", f"${last_price}")
-    c2.metric("RSI", round(last_rsi, 2))
+    c2.metric("RSI (14)", round(last_rsi, 2))
 
-    # Pattern Detection
+    # AI Pattern Detection
     patterns = df.ta.cdl_pattern(name="all")
     last_pattern = patterns.iloc[-1]
     detected = last_pattern[last_pattern != 0]
     
     if not detected.empty:
         st.sidebar.success(f"Pattern Detected: {detected.index[0]}")
+    else:
+        st.sidebar.info("Scanning for Patterns...")
 
     # Chart
     fig = go.Figure(data=[go.Candlestick(
         x=df['Timestamp'],
         open=df['Open'], high=df['High'],
-        low=df['Low'], close=df['Close']
+        low=df['Low'], close=df['Close'],
+        name="Market Data"
     )])
-    fig.update_layout(xaxis_rangeslider_visible=False)
+    fig.update_layout(xaxis_rangeslider_visible=False, height=600)
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Waiting for data from Binance... Please wait 30 seconds.")
-
+    st.info("Market data load ho raha hai... 30 seconds wait karein.")
