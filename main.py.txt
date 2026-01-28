@@ -1,0 +1,79 @@
+import streamlit as st
+import ccxt
+import pandas as pd
+import pandas_ta as ta
+import plotly.graph_objects as go
+from streamlit_autorefresh import st_autorefresh
+
+# 30-sec refresh settings
+st_autorefresh(interval=30 * 1000, key="datarefresh")
+
+st.set_page_config(page_title="AI Crypto Pro", layout="wide")
+st.title("?? AI Crypto Live Analyzer & Strategy Bot")
+
+# --- SESSION STATE (Data Storage) ---
+if 'history' not in st.session_state:
+    st.session_state.history = []
+
+# --- SIDEBAR ---
+st.sidebar.header("Control Panel")
+symbol = st.sidebar.selectbox("Coin", ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT'])
+timeframe = st.sidebar.selectbox("Timeframe", ['1m', '5m', '15m', '1h'])
+
+# --- FETCH DATA ---
+exchange = ccxt.binance()
+def fetch_data():
+    bars = exchange.fetch_ohlcv(symbol, timeframe=timeframe, limit=100)
+    df = pd.DataFrame(bars, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
+    df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='ms')
+    return df
+
+df = fetch_data()
+
+# --- AI CALCULATION ---
+df['RSI'] = ta.rsi(df['Close'], length=14)
+df['EMA_20'] = ta.ema(df['Close'], length=20)
+df['ATR'] = ta.atr(df['High'], df['Low'], df['Close'], length=14)
+
+last_row = df.iloc[-1]
+last_price = last_row['Close']
+last_rsi = last_row['RSI']
+last_atr = last_row['ATR']
+
+# --- TOP STATS ---
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Live Price", f"${last_price}")
+c2.metric("RSI", round(last_rsi, 2))
+c3.metric("Trend", "BULLISH ??" if last_price > last_row['EMA_20'] else "BEARISH ??")
+c4.metric("Volatility (ATR)", round(last_atr, 2))
+
+# --- TRADING LOGIC ---
+fig = go.Figure()
+fig.add_trace(go.Candlestick(x=df['Timestamp'], open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
+
+if last_rsi < 30:
+    target = last_price + (last_atr * 2.5)
+    stop_loss = last_price - (last_atr * 1.5)
+    
+    st.sidebar.warning("?? SIGNAL DETECTED!")
+    st.sidebar.write(f"**Entry:** {last_price}")
+    st.sidebar.write(f"**Target:** {round(target, 2)}")
+    st.sidebar.write(f"**SL:** {round(stop_loss, 2)}")
+    
+    # Chart par lines draw karna
+    fig.add_hline(y=target, line_dash="dash", line_color="green", annotation_text="Target")
+    fig.add_hline(y=stop_loss, line_dash="dash", line_color="red", annotation_text="StopLoss")
+    
+    # Save to history
+    new_entry = {"Time": last_row['Timestamp'], "Signal": "BUY", "Price": last_price, "Target": round(target, 2)}
+    if not st.session_state.history or st.session_state.history[-1]['Time'] != last_row['Timestamp']:
+        st.session_state.history.append(new_entry)
+
+st.plotly_chart(fig, use_container_width=True)
+
+# --- TRADE LOG TABLE ---
+st.subheader("?? AI Trade Signals Log")
+if st.session_state.history:
+    st.table(pd.DataFrame(st.session_state.history).tail(5))
+else:
+    st.info("Scanning for entry points...")
