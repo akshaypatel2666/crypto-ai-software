@@ -3,87 +3,51 @@ import pandas as pd
 import pandas_ta as ta
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
-import requests # Direct API call ke liye
+import requests
 
-# --- 1 SECOND REFRESH ---
-st_autorefresh(interval=1000, key="vantage_sync")
+# --- SPEED FIX: Refresh every 5 seconds instead of 1 ---
+st_autorefresh(interval=5000, key="vantage_sync_fast")
 
-st.set_page_config(page_title="Vantage Real-Time Sync", layout="wide")
-
-# Custom UI for Price
-st.markdown("""
-    <style>
-    .vantage-price {
-        background-color: #000000;
-        padding: 30px;
-        border-radius: 10px;
-        border: 2px solid #ffcc00;
-        text-align: center;
-    }
-    .big-font { font-size: 70px !important; color: #ffcc00; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
+st.set_page_config(page_title="Vantage Fast Sync", layout="wide")
 
 # Sidebar
-st.sidebar.title("Vantage Sync Settings")
 coin = st.sidebar.selectbox("Select Coin", ["BTCUSDT", "ETHUSDT", "SOLUSDT"])
-# Vantage price match karne ke liye manual adjustment
-offset = st.sidebar.number_input("Price Adjustment (Manual Sync)", value=0.0)
+offset = st.sidebar.number_input("Price Adjustment", value=0.0)
 
-def get_crypto_price_direct(symbol):
+# --- SPEED FIX: Data caching ---
+@st.cache_data(ttl=5) # 5 second tak data save rahega
+def get_crypto_data(symbol):
     try:
-        # Hum Binance ki aisi API use karenge jo location block nahi karti
-        url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-        response = requests.get(url, timeout=2)
-        data = response.json()
-        return float(data['price'])
+        # Ticker price
+        p_url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+        # Klines (Chart) - Limit kam rakhi hai speed ke liye
+        k_url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=30"
+        
+        price_res = requests.get(p_url, timeout=1).json()
+        klines_res = requests.get(k_url, timeout=1).json()
+        
+        return float(price_res['price']), klines_res
     except:
-        return None
+        return None, None
 
-def get_klines_direct(symbol):
-    try:
-        # Candlestick data fetch karne ke liye
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit=50"
-        res = requests.get(url, timeout=2)
-        data = res.json()
-        df = pd.DataFrame(data, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'QuoteAssetVol', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
-        df['Close'] = df['Close'].astype(float)
-        df['Open'] = df['Open'].astype(float)
-        df['High'] = df['High'].astype(float)
-        df['Low'] = df['Low'].astype(float)
-        df['Time'] = pd.to_datetime(df['Time'], unit='ms')
-        return df
-    except:
-        return None
-
-# Execution
-live_rate = get_crypto_price_direct(coin)
-df = get_klines_direct(coin)
+live_rate, klines = get_crypto_data(coin)
 
 if live_rate:
-    adjusted_price = live_rate + offset
+    # Dashboard Display
+    st.subheader(f"⚡ Live {coin} Rate")
+    st.title(f"${live_rate + offset:,.2f}")
     
-    # --- VANTAGE LIVE DASHBOARD ---
-    st.markdown(f'''
-        <div class="vantage-price">
-            <p style="color:white; font-size:20px;">VANTAGE LIVE RATE (SECONDS)</p>
-            <p class="big-font">${adjusted_price:,.2f}</p>
-        </div>
-    ''', unsafe_allow_html=True)
+    if klines:
+        df = pd.DataFrame(klines, columns=['Time', 'Open', 'High', 'Low', 'Close', 'Vol', 'CT', 'QAV', 'T', 'TBB', 'TBQ', 'I'])
+        df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].astype(float)
+        df['Time'] = pd.to_datetime(df['Time'], unit='ms')
 
-    if df is not None:
-        # Indicators
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        
-        # Chart
+        # Chart optimized (Simplified layout)
         fig = go.Figure(data=[go.Candlestick(
             x=df['Time'], open=df['Open']+offset, high=df['High']+offset,
             low=df['Low']+offset, close=df['Close']+offset
         )])
-        fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Sidebar RSI
-        st.sidebar.metric("Live RSI", round(df['RSI'].iloc[-1], 2))
+        fig.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0), xaxis_rangeslider_visible=False, template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 else:
-    st.error("Connecting to Global Price Server...")
+    st.warning("Speeding up connection... Please wait.")
